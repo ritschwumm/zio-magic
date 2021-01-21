@@ -1,6 +1,7 @@
 package zio.magic.macros
 
 import zio._
+import zio.magic.macros.ExprGraph.LayerExpr
 
 import scala.reflect.macros.blackbox
 
@@ -17,8 +18,24 @@ class ProvideMagicLayerMacros(val c: blackbox.Context) extends MacroUtils {
       dummyK: c.Expr[DummyK[R]]
   ): c.Expr[ZIO[Any, E, A]] = {
     assertProperVarArgs(layers)
-    val layerExpr = ExprGraph(layers.map(getNode).toList, c).buildLayerFor(getRequirements[R])
-    c.Expr(q"${c.prefix}.zio.provideLayer(${layerExpr.tree.asInstanceOf[c.Tree]})")
+    val nodes = layers.map(getNode).toList
+    val _     = ExprGraph(nodes, c).buildLayerFor(getRequirements[R])
+
+    val renamedNodes = nodes.zipWithIndex.map { case (node, i) =>
+      val freshName = c.freshName("layer")
+      val termName  = TermName(freshName)
+      node.copy(value = c.Expr[ZLayer[_, _, _]](q"${termName}"))
+    }
+
+    val layerExpr = ExprGraph(renamedNodes, c).buildLayerFor(getRequirements[R])
+    val definitions = renamedNodes.zip(nodes).map { case (renamedNode, node) =>
+      ValDef(Modifiers(), TermName(renamedNode.value.tree.toString()), TypeTree(), node.value.tree)
+    }
+
+    c.Expr(q"""
+    ..$definitions
+    ${c.prefix}.zio.provideLayer(${layerExpr.tree.asInstanceOf[c.Tree]})
+    """)
   }
 
   def provideCustomMagicLayerImpl[

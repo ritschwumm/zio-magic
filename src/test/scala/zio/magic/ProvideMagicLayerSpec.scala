@@ -4,7 +4,7 @@ import zio.test.Assertion._
 import zio.test.AssertionM.Render.param
 import zio.test._
 import zio.test.environment.TestEnvironment
-import zio.{Has, ZIO, ZLayer}
+import zio.{Has, Ref, ULayer, URLayer, ZIO, ZLayer}
 
 import scala.annotation.unused
 
@@ -50,6 +50,23 @@ object ProvideMagicLayerSpec extends DefaultRunnableSpec {
           )
 
         assertM(provided)(equalTo("(9001,33.3)"))
+      },
+      testM("it memoizes layer arguments automatically") {
+        def stringLayer(ref: Ref[Int]): ZLayer[Any, Nothing, Has[String]] = (for {
+          _ <- ref.update(_ + 1)
+        } yield "Howdy").toLayer
+
+        val layerA: URLayer[Has[String], Has[Int]]     = ZLayer.succeed(1)
+        val layerB: URLayer[Has[String], Has[Boolean]] = ZLayer.succeed(true)
+
+        val program: ZIO[Has[Boolean] with Has[Int], Nothing, (Int, Boolean)] =
+          ZIO.service[Int] <*> ZIO.service[Boolean]
+
+        for {
+          ref    <- Ref.make(0)
+          _      <- program.provideMagicLayer(layerA, layerB, stringLayer(ref))
+          result <- ref.get
+        } yield assert(result)(equalTo(1))
       }
     )
   }
